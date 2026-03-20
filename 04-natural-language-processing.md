@@ -519,3 +519,453 @@ User → Channel (Teams, Web, Slack)
 - [SSML Reference](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-synthesis-markup)
 - [Speech SDK Reference](https://learn.microsoft.com/en-us/python/api/azure-cognitiveservices-speech/)
 - [Azure Bot Service](https://learn.microsoft.com/en-us/azure/bot-service/)
+
+---
+
+# Detailed Explanations
+
+This section provides in-depth explanations for complex topics to support your understanding.
+
+## Understanding Azure AI Language Service
+
+### The Unified Language Service
+
+Azure AI Language combines what used to be separate services into one:
+
+| Old Service | New Feature | Status |
+|-------------|-------------|--------|
+| Text Analytics | Prebuilt features (sentiment, NER, etc.) | Unified |
+| LUIS | Conversational Language Understanding (CLU) | LUIS retired Oct 2025 |
+| QnA Maker | Custom Question Answering | QnA Maker retired Oct 2025 |
+| Text Analytics for Health | Still separate due to compliance | Available |
+
+### Prebuilt vs Custom Features
+
+| Prebuilt (No Training) | Custom (Training Required) |
+|------------------------|---------------------------|
+| Sentiment Analysis | CLU (Conversational Understanding) |
+| Key Phrase Extraction | Custom Text Classification |
+| NER (Named Entity Recognition) | Custom NER |
+| PII Detection | Custom Question Answering |
+| Language Detection | |
+| Summarization | |
+
+## Deep Dive: Sentiment Analysis
+
+### How Sentiment Works
+
+The model analyzes text and classifies it as:
+- **Positive**: Expressing approval, happiness, satisfaction
+- **Negative**: Expressing disapproval, disappointment, frustration
+- **Neutral**: Factual statements, no emotion
+- **Mixed**: Contains both positive and negative sentiments
+
+### Document-Level vs Sentence-Level
+
+```python
+documents = ["The hotel was amazing but the food was terrible."]
+response = client.analyze_sentiment(documents)
+
+# Document-level (overall)
+print(response[0].sentiment)  # "mixed"
+
+# Sentence-level (granular)
+for sentence in response[0].sentences:
+    print(f"{sentence.text} → {sentence.sentiment}")
+    # "The hotel was amazing" → "positive"
+    # "but the food was terrible" → "negative"
+```
+
+### Opinion Mining (Aspect-Based Sentiment)
+
+Goes deeper than sentence-level — identifies WHAT is being talked about and how:
+
+```python
+response = client.analyze_sentiment(documents, show_opinion_mining=True)
+```
+
+**Output Structure**:
+```
+Sentence: "The hotel was amazing"
+├── Target: "hotel" → positive
+│   └── Assessment: "amazing" → positive
+
+Sentence: "but the food was terrible"  
+├── Target: "food" → negative
+│   └── Assessment: "terrible" → negative
+```
+
+**Real-World Use Case**: Product reviews analysis
+- Extract: "battery life" → positive, "screen" → negative, "camera" → positive
+- Aggregate across thousands of reviews
+- Identify product strengths/weaknesses
+
+## Deep Dive: Conversational Language Understanding (CLU)
+
+### Key Terminology
+
+| Term | Simple Definition | Example |
+|------|-------------------|---------|
+| **Utterance** | What the user says | "Book a flight to Seattle tomorrow" |
+| **Intent** | What the user wants to DO | `BookFlight` |
+| **Entity** | Important data to EXTRACT | Destination: "Seattle", Date: "tomorrow" |
+
+### CLU vs LUIS
+
+| Feature | LUIS (Retired) | CLU |
+|---------|---------------|-----|
+| Interface | Separate LUIS portal | Language Studio |
+| Entity Types | Hierarchical, composite | Learned, List, Prebuilt, Regex |
+| Orchestration | No native support | Orchestration workflows |
+| Integration | Standalone | Part of Language Service |
+
+### Entity Types Explained
+
+#### 1. Learned Entities
+Machine learning extracts entities from training examples.
+
+```
+Training:
+- "Book a flight to Seattle" → Destination: Seattle
+- "I want to fly to London" → Destination: London
+- "Reserve ticket to Paris" → Destination: Paris
+
+After training, model learns pattern and extracts destinations automatically.
+```
+
+**When to Use**: Custom entities specific to your domain
+
+#### 2. List Entities
+Exact match from a predefined list with synonyms.
+
+```json
+{
+  "entity": "Size",
+  "list": [
+    { "canonicalForm": "Small", "synonyms": ["S", "sm", "petit"] },
+    { "canonicalForm": "Medium", "synonyms": ["M", "med", "regular"] },
+    { "canonicalForm": "Large", "synonyms": ["L", "lg", "big"] }
+  ]
+}
+```
+
+**When to Use**: Closed sets of values (sizes, colors, product SKUs)
+
+#### 3. Prebuilt Entities
+Pre-trained to recognize common types:
+
+| Prebuilt Entity | Recognizes |
+|----------------|------------|
+| `DateTime` | Dates, times, durations |
+| `Number` | Cardinals, ordinals |
+| `Temperature` | Fahrenheit, Celsius |
+| `Currency` | Money amounts |
+| `Email` | Email addresses |
+| `URL` | Web addresses |
+
+#### 4. Regex Entities
+Pattern matching using regular expressions.
+
+```
+Pattern: ORD-\d{6}
+Matches: "ORD-123456", "ORD-999888"
+```
+
+**When to Use**: Structured identifiers (order IDs, license plates, product codes)
+
+### Training Best Practices
+
+| Recommendation | Why |
+|----------------|-----|
+| 15+ utterances per intent | Minimum for decent accuracy |
+| 50+ utterances per intent | Recommended for production |
+| Varied phrasing | "Book a flight", "I want to fly", "Reserve a ticket" |
+| Include entities | Label ALL entity instances |
+| Balance intents | Similar number of utterances across intents |
+| Include None intent | Examples of out-of-scope requests |
+
+### Evaluating CLU Models
+
+After training, evaluate with test data:
+
+| Metric | Question It Answers |
+|--------|-------------------|
+| **Precision** | Of predictions made, how many were correct? |
+| **Recall** | Of actual cases, how many did we find? |
+| **F1 Score** | Harmonic mean of precision and recall |
+
+**Per Intent and Per Entity**: You get metrics for each intent and each entity type separately.
+
+## Deep Dive: Custom Question Answering
+
+### When to Use Q&A vs CLU
+
+| Scenario | Use |
+|----------|-----|
+| User asks questions expecting answers | Custom Q&A |
+| User wants to DO something (book, order, schedule) | CLU |
+| FAQ-style interactions | Custom Q&A |
+| Task-oriented conversations | CLU |
+| Simple chitchat | Custom Q&A |
+
+### Knowledge Base Sources
+
+| Source Type | Best For | Considerations |
+|-------------|----------|----------------|
+| **URLs** | Existing FAQ pages | Pages must be crawlable |
+| **PDF/DOCX** | Internal documents | Extract Q&A pairs automatically |
+| **Excel/TSV** | Structured Q&A lists | Direct import of Q&A pairs |
+| **Manual** | Custom pairs | Full control over Q&A |
+| **Chitchat** | Personality | Pre-built conversational responses |
+
+### Multi-Turn Conversations Explained
+
+Simple Q&A is one question, one answer. Multi-turn adds follow-up context:
+
+```
+User: "How do I return a product?"
+Bot: "What type of product do you want to return?"
+    ├── [Electronics] → "Electronics must be returned within 30 days..."
+    ├── [Clothing] → "Clothing can be returned within 60 days..."
+    └── [Other] → "Please contact customer support..."
+```
+
+This creates a decision tree starting from one question.
+
+### Active Learning
+
+The system learns from real user queries:
+
+```
+Original Q&A:
+  Q: "How do I reset my password?"
+  A: "Go to Settings > Security > Reset Password..."
+
+Users also asked:
+  - "forgot my password"
+  - "change password"
+  - "password recovery"
+
+Active Learning Suggestion:
+  Add these as alternate questions for the same answer
+```
+
+**Benefits**:
+- Improves matching over time
+- Discovers how real users phrase questions
+- Reduces "I don't understand" responses
+
+### Confidence Thresholds
+
+```python
+# Set threshold in query
+response = qna_client.get_answers(
+    question="How do I return?",
+    confidence_threshold=0.7
+)
+
+if response.answers[0].confidence >= 0.7:
+    return response.answers[0].answer
+else:
+    return "I'm not sure. Let me connect you to an agent."
+```
+
+## Deep Dive: Translator
+
+### Understanding Translation API Structure
+
+The Translator API is regional — you must specify the region:
+
+```python
+headers = {
+    "Ocp-Apim-Subscription-Key": "<key>",
+    "Ocp-Apim-Subscription-Region": "<region>",  # Required!
+    "Content-Type": "application/json"
+}
+```
+
+### Translate vs Transliterate
+
+| Operation | Input | Output |
+|-----------|-------|--------|
+| **Translate** | "Hello" (English) | "Bonjour" (French) |
+| **Transliterate** | "こんにちは" (Japanese kanji) | "Konnichiwa" (Latin script) |
+
+Transliterate converts SCRIPT, not language. The meaning stays the same.
+
+### Custom Translator Deep Dive
+
+For domain-specific translations where generic models fail:
+
+```
+Generic Model:
+"The Python script failed" → "Le script Python a échoué"
+(Might translate "Python" as the snake)
+
+Custom Model (trained on tech docs):
+"The Python script failed" → "Le script Python a échoué"
+(Knows Python is a programming language)
+```
+
+**Training Requirements**:
+- Parallel documents (same content in both languages)
+- Minimum 10,000 parallel sentences recommended
+- Domain-specific terminology
+
+### Document Translation
+
+For batch processing of entire documents:
+
+```
+1. Upload source documents to Blob Storage
+2. Specify target container for translations
+3. Submit batch job
+4. Poll for completion
+5. Download translated documents
+
+Supports: PDF, DOCX, PPTX, XLSX, HTML, TXT, and more
+```
+
+## Deep Dive: Speech Service
+
+### Speech-to-Text (STT) Configurations
+
+```python
+speech_config = speechsdk.SpeechConfig(
+    subscription="<key>",
+    region="<region>"
+)
+
+# Language setting
+speech_config.speech_recognition_language = "en-US"
+
+# Audio configuration options
+audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
+# OR
+audio_config = speechsdk.audio.AudioConfig(filename="audio.wav")
+# OR  
+audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
+```
+
+### Continuous vs Single Recognition
+
+| Mode | Use Case | Method |
+|------|----------|--------|
+| **Single** | Short phrases, commands | `recognize_once_async()` |
+| **Continuous** | Long-form speech, dictation | `start_continuous_recognition_async()` |
+
+```python
+# Continuous recognition
+def recognized_callback(evt):
+    print(f"Recognized: {evt.result.text}")
+
+recognizer.recognized.connect(recognized_callback)
+recognizer.start_continuous_recognition_async()
+# ... later ...
+recognizer.stop_continuous_recognition_async()
+```
+
+### Text-to-Speech (TTS) Voice Selection
+
+Azure offers 400+ neural voices across 140+ languages:
+
+```python
+speech_config.speech_synthesis_voice_name = "en-US-JennyNeural"
+```
+
+**Voice Naming Convention**: `{language}-{country}-{name}Neural`
+
+| Example | Description |
+|---------|-------------|
+| `en-US-JennyNeural` | English (US), Jenny voice |
+| `en-GB-SoniaNeural` | English (UK), Sonia voice |
+| `zh-CN-XiaoxiaoNeural` | Chinese (Mandarin), Xiaoxiao voice |
+
+### SSML Deep Dive
+
+Speech Synthesis Markup Language gives fine control over speech output:
+
+```xml
+<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"
+       xmlns:mstts="http://www.w3.org/2001/mstts"
+       xml:lang="en-US">
+  
+  <!-- Voice selection -->
+  <voice name="en-US-JennyNeural">
+    
+    <!-- Speaking style (emotion/tone) -->
+    <mstts:express-as style="cheerful">
+      Welcome to our service!
+    </mstts:express-as>
+    
+    <!-- Pause -->
+    <break time="500ms"/>
+    
+    <!-- Speed and pitch control -->
+    <prosody rate="-10%" pitch="+5%">
+      How may I help you today?
+    </prosody>
+    
+    <!-- Pronunciation guidance -->
+    <say-as interpret-as="date" format="mdy">3/20/2026</say-as>
+    
+    <!-- Custom pronunciation -->
+    <phoneme alphabet="ipa" ph="ˈkɒɡnɪtɪv">cognitive</phoneme>
+    
+    <!-- Substitution (read differently than written) -->
+    <sub alias="Azure AI">AAI</sub>
+    
+  </voice>
+</speak>
+```
+
+**Key SSML Elements**:
+
+| Element | Purpose | Example |
+|---------|---------|---------|
+| `<voice>` | Select voice | `name="en-US-JennyNeural"` |
+| `<prosody>` | Speed, pitch, volume | `rate="-20%" pitch="+10%"` |
+| `<break>` | Insert pause | `time="500ms"` or `strength="strong"` |
+| `<mstts:express-as>` | Speaking style | `style="cheerful"`, `style="sad"` |
+| `<say-as>` | Interpretation | `interpret-as="date"`, `"telephone"` |
+| `<phoneme>` | Custom pronunciation | IPA symbols |
+| `<sub>` | Read alias instead | Acronyms, abbreviations |
+
+### Speaker Recognition
+
+#### Verification (1:1)
+"Is this voice the person they claim to be?"
+
+```
+Enrollment: User speaks passphrase 3 times
+Verification: User speaks same passphrase
+Result: Match (confidence score) or No Match
+```
+
+#### Identification (1:N)
+"Who is speaking from this group of people?"
+
+```
+Enrollment: Enroll multiple speakers (minimum 20 seconds each)
+Identification: New audio sample
+Result: "This is Speaker #3 with 95% confidence"
+```
+
+**Text-Independent**: No specific passphrase needed — user speaks freely
+
+## Additional Learning Resources
+
+### Microsoft Learn Modules (Free)
+- [Analyze text with Azure AI Language](https://learn.microsoft.com/en-us/training/modules/analyze-text-ai-language/)
+- [Build a conversational language understanding model](https://learn.microsoft.com/en-us/training/modules/build-language-understanding-model/)
+- [Create a question answering solution](https://learn.microsoft.com/en-us/training/modules/create-question-answer-solution/)
+- [Translate text and speech](https://learn.microsoft.com/en-us/training/modules/translate-text-speech/)
+- [Create speech-enabled apps](https://learn.microsoft.com/en-us/training/modules/create-speech-enabled-apps/)
+
+### Official Documentation
+- [Azure AI Language documentation](https://learn.microsoft.com/en-us/azure/ai-services/language-service/)
+- [CLU documentation](https://learn.microsoft.com/en-us/azure/ai-services/language-service/conversational-language-understanding/overview)
+- [Question Answering documentation](https://learn.microsoft.com/en-us/azure/ai-services/language-service/question-answering/overview)
+- [Translator documentation](https://learn.microsoft.com/en-us/azure/ai-services/translator/)
+- [Speech Service documentation](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/)
+- [SSML reference](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-synthesis-markup)

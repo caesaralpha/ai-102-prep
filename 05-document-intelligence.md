@@ -223,3 +223,382 @@ URL: [https://formrecognizer.appliedai.azure.com/](https://formrecognizer.applie
 - [Composed Models](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/concept-composed-models)
 - [Document Intelligence Studio](https://formrecognizer.appliedai.azure.com/)
 - [Document Intelligence REST API](https://learn.microsoft.com/en-us/rest/api/aiservices/document-models)
+
+---
+
+# Detailed Explanations
+
+This section provides in-depth explanations for complex topics to support your understanding.
+
+## Understanding Document Intelligence
+
+### What is Document Intelligence?
+
+Azure AI Document Intelligence (formerly Form Recognizer) extracts information from documents using AI. Unlike simple OCR that just reads text, Document Intelligence understands document STRUCTURE — fields, tables, headers, and relationships.
+
+### The Model Hierarchy
+
+```
+Document Intelligence Models
+├── Read Model (OCR only)
+│   └── Just extracts text — no structure
+├── Layout Model
+│   └── Text + Tables + Selection marks + Structure
+├── General Document Model
+│   └── Layout + Key-value pairs (generic)
+├── Prebuilt Models
+│   └── Layout + Specific fields for document types
+│       ├── prebuilt-invoice
+│       ├── prebuilt-receipt
+│       ├── prebuilt-idDocument
+│       └── ... (more)
+└── Custom Models
+    └── Your trained models for your documents
+        ├── Template (fixed layout)
+        └── Neural (variable layout)
+```
+
+## Model Selection Guide
+
+### When to Use Each Model
+
+| You Need To... | Use This Model | Why |
+|---------------|----------------|-----|
+| Just read text from any document | `prebuilt-read` | Fastest, cheapest |
+| Extract tables from documents | `prebuilt-layout` | Understands table structure |
+| Extract data from invoices | `prebuilt-invoice` | Pre-trained on invoice fields |
+| Extract data from receipts | `prebuilt-receipt` | Optimized for receipts |
+| Extract from your custom forms | Custom Template | Train on your forms |
+| Extract from varied documents | Custom Neural | Handles layout variations |
+
+### Prebuilt Models Deep Dive
+
+#### Read Model
+**What It Does**: Pure OCR — extracts all text from the document.
+
+**Output**:
+```
+Page 1:
+  Line: "Invoice #12345"
+  Line: "Date: March 20, 2026"
+  Line: "Total: $500.00"
+```
+
+**Use When**: You just need the raw text, no structure.
+
+#### Layout Model
+**What It Does**: OCR + understands document structure.
+
+**Output**:
+```
+Page 1:
+  Paragraphs:
+    - "Invoice #12345" (role: title)
+    - "Date: March 20, 2026" (role: text)
+  Tables:
+    - Table 1 (3 rows x 4 columns)
+      Row 1: ["Item", "Qty", "Price", "Total"]
+      Row 2: ["Widget A", "5", "$10.00", "$50.00"]
+  Selection Marks:
+    - Checkbox at (100, 200): selected
+```
+
+**Use When**: You need tables, checkboxes, or want to understand document layout.
+
+#### Prebuilt Invoice
+**What It Does**: Extracts invoice-specific fields.
+
+**Fields Extracted**:
+| Field | Description |
+|-------|-------------|
+| `VendorName` | Company sending the invoice |
+| `VendorAddress` | Vendor's address |
+| `CustomerName` | Customer being billed |
+| `InvoiceId` | Invoice number |
+| `InvoiceDate` | Date on invoice |
+| `DueDate` | Payment due date |
+| `SubTotal` | Pre-tax amount |
+| `TotalTax` | Tax amount |
+| `InvoiceTotal` | Total amount due |
+| `Items` | Line items array |
+
+**Line Items Include**: Description, Quantity, UnitPrice, Amount, ProductCode, etc.
+
+#### Prebuilt ID Document
+**What It Does**: Extracts fields from ID cards, passports, driver's licenses.
+
+**Fields Extracted**:
+| Field | Description |
+|-------|-------------|
+| `FirstName` | Given name |
+| `LastName` | Surname |
+| `DateOfBirth` | Birth date |
+| `DocumentNumber` | ID/Passport number |
+| `ExpirationDate` | When document expires |
+| `Address` | Address on document |
+| `Sex` | Gender |
+| `CountryRegion` | Issuing country |
+
+**Important**: ID extraction has stricter data handling requirements. Review compliance.
+
+## Custom Model Deep Dive
+
+### Template vs Neural Models
+
+| Aspect | Template Model | Neural Model |
+|--------|---------------|--------------|
+| **Layout** | Fixed positions | Variable positions |
+| **Best For** | Standard forms (tax, applications) | Contracts, letters, varied layouts |
+| **Training Data** | 5+ documents minimum | 5+ documents minimum |
+| **Speed** | Faster | Slower |
+| **Accuracy** | Very high for fixed layouts | Good for varied layouts |
+
+### Training Custom Models
+
+#### Step 1: Prepare Documents
+
+**Requirements**:
+- Minimum 5 documents (more is better)
+- PDF, JPEG, PNG, or TIFF format
+- Good quality (not blurry)
+- Representative of real-world variety
+
+**Best Practices**:
+```
+Good Training Set:
+├── Form_filled_blue_ink.pdf
+├── Form_filled_black_ink.pdf
+├── Form_scanned_slightly_tilted.pdf
+├── Form_with_handwritten_fields.pdf
+└── Form_machine_printed.pdf
+
+Bad Training Set:
+├── Form_perfect_scan.pdf    (all identical)
+├── Form_perfect_scan2.pdf
+├── Form_perfect_scan3.pdf
+├── Form_perfect_scan4.pdf
+└── Form_perfect_scan5.pdf
+```
+
+#### Step 2: Upload to Blob Storage
+
+Documents must be in Azure Blob Storage with appropriate access:
+- Container with SAS token, OR
+- Managed Identity access
+
+#### Step 3: Label Documents
+
+Using Document Intelligence Studio, label the fields you want to extract:
+
+```
+Document: invoice_001.pdf
+Labels:
+├── InvoiceNumber: "INV-2026-001"
+├── Date: "March 20, 2026"
+├── Total: "$1,500.00"
+└── VendorName: "Contoso Ltd"
+```
+
+**Labeling Best Practices**:
+- Label ALL instances of each field
+- Be consistent (same field name across documents)
+- Include variations (handwritten, printed, different positions)
+
+#### Step 4: Train
+
+```python
+from azure.ai.formrecognizer import DocumentModelAdministrationClient
+from azure.core.credentials import AzureKeyCredential
+
+admin_client = DocumentModelAdministrationClient(
+    endpoint="https://...",
+    credential=AzureKeyCredential("<key>")
+)
+
+# Start training
+poller = admin_client.begin_build_document_model(
+    build_mode="template",  # or "neural"
+    blob_container_url="https://storage.blob.core.windows.net/training-data",
+    model_id="my-custom-invoice-model"
+)
+
+model = poller.result()
+print(f"Model ID: {model.model_id}")
+```
+
+### Composed Models Explained
+
+**Problem**: You have different document types (Invoice A, Invoice B, Receipt).
+
+**Solution**: Create individual models, then compose them into one.
+
+```
+Composed Model: "all-documents"
+├── Model: "invoice-type-a"
+├── Model: "invoice-type-b"
+└── Model: "receipt-model"
+
+When you analyze a document:
+1. Composed model routes to best matching sub-model
+2. You get results with the correct fields
+```
+
+**Code Example**:
+```python
+poller = admin_client.begin_compose_document_model(
+    component_model_ids=[
+        "invoice-type-a",
+        "invoice-type-b", 
+        "receipt-model"
+    ],
+    model_id="composed-all-documents"
+)
+```
+
+**Limits**:
+- Maximum 200 component models per composed model
+
+## API Patterns
+
+### Async Processing Pattern
+
+Document Intelligence uses async processing for reliability:
+
+```
+1. Submit Document
+   POST /documentModels/{model}:analyze
+   ↓
+   Response: 202 Accepted
+   Header: Operation-Location: https://...operations/{id}
+
+2. Poll for Status
+   GET /operations/{id}
+   ↓
+   { "status": "running" }
+   { "status": "running" }
+   { "status": "succeeded", "analyzeResult": {...} }
+```
+
+**Python SDK (handles polling automatically)**:
+```python
+with open("document.pdf", "rb") as f:
+    poller = client.begin_analyze_document("prebuilt-invoice", f)
+
+# This blocks until done (SDK handles polling)
+result = poller.result()
+```
+
+### Handling Multiple Pages
+
+```python
+result = poller.result()
+
+for page in result.pages:
+    print(f"Page {page.page_number}")
+    print(f"  Width: {page.width}, Height: {page.height}")
+    print(f"  Lines: {len(page.lines)}")
+    
+    for line in page.lines:
+        print(f"    {line.content}")
+```
+
+### Accessing Fields by Confidence
+
+```python
+result = poller.result()
+document = result.documents[0]
+
+for field_name, field in document.fields.items():
+    if field.confidence >= 0.9:
+        print(f"✓ {field_name}: {field.value}")
+    elif field.confidence >= 0.7:
+        print(f"? {field_name}: {field.value} (review recommended)")
+    else:
+        print(f"✗ {field_name}: {field.value} (low confidence)")
+```
+
+## Document Intelligence Studio
+
+### What You Can Do
+
+| Feature | Description |
+|---------|-------------|
+| **Try Prebuilt** | Test prebuilt models with sample or your documents |
+| **Train Custom** | Label documents and train models |
+| **Compose** | Combine multiple models |
+| **Test** | Visualize results with bounding boxes |
+| **Deploy** | Manage model deployments |
+
+**URL**: https://documentintelligence.ai.azure.com/
+
+### Studio Workflow
+
+```
+1. Create Resource (if not exists)
+   ↓
+2. Create Project
+   ↓
+3. Connect Storage Account (for training data)
+   ↓
+4. Upload Documents
+   ↓
+5. Label Fields (draw boxes, assign field names)
+   ↓
+6. Train Model
+   ↓
+7. Test Model
+   ↓
+8. Use via API (model ID)
+```
+
+## Real-World Scenarios
+
+### Invoice Processing Pipeline
+
+```
+Incoming Invoice (email/upload)
+        ↓
+Azure Blob Storage (temporary)
+        ↓
+Azure Function (triggered)
+        ↓
+Document Intelligence (prebuilt-invoice)
+        ↓
+Extract: VendorName, InvoiceId, Total, LineItems
+        ↓
+Validate against PO Database
+        ↓
+If matches: Auto-approve
+If discrepancy: Human review queue
+        ↓
+Update ERP System
+```
+
+### Multi-Document Type Processing
+
+```
+Unknown Document
+        ↓
+Composed Model (Invoice + Receipt + Contract)
+        ↓
+Routing: Identifies as "Invoice Type B"
+        ↓
+Extract fields using Invoice Type B model
+        ↓
+Process based on document type
+```
+
+## Additional Learning Resources
+
+### Microsoft Learn Modules (Free)
+- [Get started with Document Intelligence](https://learn.microsoft.com/en-us/training/modules/get-started-document-intelligence/)
+- [Extract data from forms with Document Intelligence](https://learn.microsoft.com/en-us/training/modules/work-form-recognizer/)
+- [Create a composed Document Intelligence model](https://learn.microsoft.com/en-us/training/modules/create-composed-form-recognizer-model/)
+
+### Official Documentation
+- [Document Intelligence overview](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/overview)
+- [Model overview](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/concept-model-overview)
+- [Prebuilt models](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/prebuilt-overview)
+- [Custom models](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/concept-custom)
+- [REST API reference](https://learn.microsoft.com/en-us/rest/api/aiservices/document-models)
+- [Python SDK reference](https://learn.microsoft.com/en-us/python/api/overview/azure/ai-documentintelligence-readme)

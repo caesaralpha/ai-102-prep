@@ -398,6 +398,569 @@ POST /indexes/hotels/docs/search?api-version=2024-07-01
 ## References
 
 - [Azure AI Search Documentation](https://learn.microsoft.com/en-us/azure/search/)
+
+---
+
+# Detailed Explanations
+
+This section provides in-depth explanations for complex topics to support your understanding.
+
+## Understanding Azure AI Search Architecture
+
+### The Big Picture
+
+Azure AI Search is a search-as-a-service platform that:
+1. **Ingests** content from various sources
+2. **Enriches** content with AI (optional)
+3. **Indexes** content for fast retrieval
+4. **Queries** content with powerful search capabilities
+
+### The Pipeline Flow
+
+```
+┌─────────────┐     ┌──────────┐     ┌───────────┐     ┌─────────┐
+│ Data Source │ ──► │ Indexer  │ ──► │ Skillset  │ ──► │  Index  │
+│             │     │(crawler) │     │(AI enrich)│     │         │
+└─────────────┘     └──────────┘     └───────────┘     └─────────┘
+      │                                    │                │
+      │                                    ▼                │
+      │                            ┌──────────────┐        │
+      │                            │ Knowledge    │        │
+      │                            │ Store        │        │
+      │                            │(projections) │        │
+      │                            └──────────────┘        │
+      │                                                    │
+      │                                                    ▼
+      │                                             ┌────────────┐
+      │                                             │   Search   │
+      │                                             │   Queries  │
+      │                                             └────────────┘
+```
+
+## Deep Dive: Data Sources
+
+### Supported Data Sources
+
+| Source | What It Indexes | Connection |
+|--------|-----------------|------------|
+| **Azure Blob Storage** | Files (PDF, DOCX, images) | Storage connection string |
+| **Azure Data Lake Gen2** | Files with hierarchical namespace | ADLS connection string |
+| **Azure SQL Database** | Table/view rows | SQL connection string |
+| **Azure Cosmos DB** | JSON documents | Cosmos connection string |
+| **Azure Table Storage** | Table rows | Storage connection string |
+
+### Data Source Configuration
+
+```json
+{
+  "name": "my-blob-source",
+  "type": "azureblob",
+  "credentials": {
+    "connectionString": "DefaultEndpointsProtocol=https;AccountName=..."
+  },
+  "container": {
+    "name": "documents",
+    "query": "subfolder/"
+  }
+}
+```
+
+### Document Cracking
+
+When indexing from Blob Storage, Azure AI Search "cracks" documents:
+
+| File Type | What's Extracted |
+|-----------|------------------|
+| PDF | Text (per page), metadata |
+| DOCX/DOC | Text, embedded images |
+| PPTX | Text from slides |
+| XLSX | Cell contents |
+| Images | Normalized images (for OCR skills) |
+| JSON | Properties as fields |
+| HTML | Text content |
+
+## Deep Dive: Index Schema
+
+### Understanding Field Attributes
+
+Each field in an index has attributes that control behavior:
+
+| Attribute | What It Enables | Example Use |
+|-----------|----------------|-------------|
+| **key** | Unique document identifier | `hotelId` |
+| **searchable** | Full-text search | `description` for keyword search |
+| **filterable** | `$filter` expressions | `category eq 'Luxury'` |
+| **sortable** | `$orderby` expressions | Sort by `rating desc` |
+| **facetable** | Faceted navigation | Category drill-down |
+| **retrievable** | Returned in results | Which fields to show |
+
+### Choosing Attributes
+
+**Scenario**: Hotel search application
+
+```json
+{
+  "name": "hotels-index",
+  "fields": [
+    {
+      "name": "hotelId",
+      "type": "Edm.String",
+      "key": true,          // Unique identifier
+      "retrievable": true   // Need to show it
+    },
+    {
+      "name": "hotelName",
+      "type": "Edm.String",
+      "searchable": true,   // Search by name
+      "retrievable": true   // Show in results
+    },
+    {
+      "name": "description",
+      "type": "Edm.String",
+      "searchable": true,   // Full-text search
+      "retrievable": true,
+      "analyzer": "en.microsoft"  // English analysis
+    },
+    {
+      "name": "category",
+      "type": "Edm.String",
+      "filterable": true,   // Filter: $filter=category eq 'Luxury'
+      "facetable": true,    // Facet: count by category
+      "sortable": true,     // Sort alphabetically
+      "retrievable": true
+    },
+    {
+      "name": "rating",
+      "type": "Edm.Double",
+      "filterable": true,   // Filter: $filter=rating ge 4
+      "sortable": true,     // Sort: $orderby=rating desc
+      "facetable": true,    // Facet: count by rating
+      "retrievable": true
+    },
+    {
+      "name": "internalNotes",
+      "type": "Edm.String",
+      "searchable": false,  // Don't search this
+      "retrievable": false  // Don't expose to users
+    }
+  ]
+}
+```
+
+### Analyzers Explained
+
+Analyzers process text for searching:
+
+```
+Input: "The quick brown FOXES jumped!"
+        ↓ (Analyzer)
+Tokens: ["quick", "brown", "fox", "jump"]
+```
+
+**What Analyzers Do**:
+1. Lowercase
+2. Remove stop words ("the", "a", "is")
+3. Stem words ("foxes" → "fox", "jumped" → "jump")
+4. Handle language-specific rules
+
+**Built-in Analyzers**:
+| Analyzer | Language | Use |
+|----------|----------|-----|
+| `en.microsoft` | English | Best for English text |
+| `en.lucene` | English | Alternative English |
+| `standard` | Generic | Language-agnostic |
+| `keyword` | None | Exact match (no tokenization) |
+
+## Deep Dive: Skillsets (AI Enrichment)
+
+### How Skillsets Work
+
+Skills transform content during indexing:
+
+```
+Original Document: PDF with text and images
+        ↓
+┌─────────────────────────────────────────────┐
+│ Skillset Pipeline                            │
+│  1. OCR Skill → Extract text from images    │
+│  2. Text Merge → Combine all text           │
+│  3. Language Detection → "en"               │
+│  4. Key Phrase Extraction → ["AI", "ML"]    │
+│  5. Entity Recognition → ["Microsoft", "Seattle"] │
+│  6. Sentiment → "positive" (0.85)           │
+└─────────────────────────────────────────────┘
+        ↓
+Enriched Document (indexed with all extracted data)
+```
+
+### Understanding Context and Inputs/Outputs
+
+Skills operate on a **document tree**:
+
+```
+/document
+├── /document/content              (original text)
+├── /document/normalized_images/0  (first embedded image)
+├── /document/normalized_images/1  (second embedded image)
+├── /document/merged_content       (created by skill)
+├── /document/keyPhrases           (created by skill)
+└── /document/people               (created by skill)
+```
+
+**Skill Input/Output Example**:
+```json
+{
+  "@odata.type": "#Microsoft.Skills.Text.KeyPhraseExtractionSkill",
+  "name": "key-phrases",
+  "context": "/document",  // Run once per document
+  "inputs": [
+    {
+      "name": "text",
+      "source": "/document/content"  // Input from here
+    }
+  ],
+  "outputs": [
+    {
+      "name": "keyPhrases",
+      "targetName": "keyPhrases"  // Store at /document/keyPhrases
+    }
+  ]
+}
+```
+
+### Processing Images with Skills
+
+```
+Document (PDF with images)
+        ↓ (Document cracking)
+/document/normalized_images/*  (extracted images)
+        ↓ (OCR Skill)
+/document/normalized_images/*/ocrText  (text from each image)
+        ↓ (Text Merge Skill)
+/document/merged_content  (all text combined)
+```
+
+### Custom Skills
+
+When built-in skills aren't enough, create your own:
+
+```
+Azure AI Search ←→ Your Azure Function
+                   (Custom processing)
+```
+
+**Request Format** (sent to your function):
+```json
+{
+  "values": [
+    {
+      "recordId": "abc123",
+      "data": {
+        "text": "Content to process",
+        "otherField": "..."
+      }
+    }
+  ]
+}
+```
+
+**Response Format** (your function returns):
+```json
+{
+  "values": [
+    {
+      "recordId": "abc123",
+      "data": {
+        "customResult": "Processed output"
+      },
+      "errors": [],
+      "warnings": []
+    }
+  ]
+}
+```
+
+**Critical**: 
+- `recordId` must match input
+- Return `errors` array for failures
+- Return `warnings` array for non-fatal issues
+
+## Deep Dive: Knowledge Store
+
+### What is Knowledge Store?
+
+While the Index is for searching, Knowledge Store saves enrichments for OTHER purposes:
+- Power BI dashboards
+- Data science analysis
+- Archive enriched content
+- Feed other systems
+
+### Projection Types
+
+| Type | Storage | Best For |
+|------|---------|----------|
+| **Table** | Azure Table Storage | Structured querying, Power BI |
+| **Object** | Blob (JSON) | Preserving full enrichment tree |
+| **File** | Blob (binary) | Extracted images |
+
+### Knowledge Store Example
+
+```json
+{
+  "knowledgeStore": {
+    "storageConnectionString": "<connection>",
+    "projections": [
+      {
+        "tables": [
+          {
+            "tableName": "DocumentsTable",
+            "generatedKeyName": "Documentid",
+            "source": "/document/enriched"
+          },
+          {
+            "tableName": "KeyPhrasesTable",
+            "generatedKeyName": "KeyPhraseId",
+            "source": "/document/keyPhrases/*"
+          }
+        ],
+        "objects": [
+          {
+            "storageContainer": "enriched-documents",
+            "source": "/document"
+          }
+        ],
+        "files": [
+          {
+            "storageContainer": "extracted-images",
+            "source": "/document/normalized_images/*"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Deep Dive: Querying
+
+### Query Types
+
+#### Simple Query Syntax
+Default, user-friendly syntax:
+
+```
+wifi +luxury -pool
+```
+- `wifi` = must contain "wifi"
+- `+luxury` = MUST contain "luxury"
+- `-pool` = must NOT contain "pool"
+
+#### Full Lucene Query Syntax
+Advanced, powerful syntax:
+
+```
+hotelName:ritz~2 AND rating:[4 TO 5] AND NOT category:budget
+```
+- `hotelName:ritz~2` = "ritz" with fuzzy matching (2 edits allowed)
+- `rating:[4 TO 5]` = range query
+- `NOT category:budget` = exclusion
+
+### Filter Expressions
+
+Filters use OData syntax and operate on filterable fields:
+
+```
+# Exact match
+$filter=category eq 'Luxury'
+
+# Range
+$filter=rating ge 4 and rating le 5
+
+# Collection contains
+$filter=tags/any(t: t eq 'wifi')
+
+# Geographic distance
+$filter=geo.distance(location, geography'POINT(-122.12 47.67)') le 10
+
+# Combining conditions
+$filter=rating ge 4 and (category eq 'Luxury' or category eq 'Boutique')
+```
+
+### Faceted Navigation
+
+```
+GET /indexes/hotels/docs/search?api-version=2024-07-01
+  &search=*
+  &facet=category,count:10
+  &facet=rating
+```
+
+**Response**:
+```json
+{
+  "@search.facets": {
+    "category": [
+      { "value": "Luxury", "count": 45 },
+      { "value": "Budget", "count": 32 },
+      { "value": "Boutique", "count": 28 }
+    ],
+    "rating": [
+      { "value": 5, "count": 20 },
+      { "value": 4, "count": 35 },
+      { "value": 3, "count": 30 }
+    ]
+  }
+}
+```
+
+## Deep Dive: Semantic Search
+
+### What is Semantic Ranking?
+
+Traditional search: Match keywords, rank by frequency/relevance scores
+
+Semantic search: Understand MEANING, re-rank using AI
+
+```
+Query: "what hotels have nice views"
+
+Traditional ranking might return:
+1. "Pleasant View Hotel" (keyword match)
+2. "Nice Place Inn" (keyword match)
+
+Semantic ranking re-ranks:
+1. "Oceanfront Resort - panoramic ocean views" (actually about views)
+2. "Mountain Lodge - stunning mountain vistas" (actually about views)
+```
+
+### Semantic Captions and Answers
+
+```json
+{
+  "search": "what is the wifi policy",
+  "queryType": "semantic",
+  "semanticConfiguration": "my-config",
+  "captions": "extractive",
+  "answers": "extractive|count-3"
+}
+```
+
+**Response**:
+```json
+{
+  "@search.answers": [
+    {
+      "key": "doc123",
+      "text": "Free WiFi is available in all rooms and public areas.",
+      "score": 0.95
+    }
+  ],
+  "value": [
+    {
+      "@search.captions": [
+        {
+          "text": "...guests can enjoy complimentary WiFi throughout...",
+          "highlights": "...guests can enjoy <em>complimentary WiFi</em>..."
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Deep Dive: Vector Search
+
+### What is Vector Search?
+
+Traditional: Search by keywords
+Vector: Search by meaning (semantic similarity)
+
+```
+Document: "The cat sat on the mat"
+         ↓ (Embedding model)
+Vector: [0.1, 0.5, -0.2, 0.8, ...]  (1536 dimensions)
+
+Query: "feline resting on rug"
+       ↓ (Same embedding model)
+Vector: [0.11, 0.48, -0.19, 0.79, ...]
+
+Similarity: Very high (similar meaning!)
+```
+
+### Vector Field Configuration
+
+```json
+{
+  "name": "contentVector",
+  "type": "Collection(Edm.Single)",
+  "searchable": true,
+  "dimensions": 1536,
+  "vectorSearchProfile": "my-vector-profile"
+}
+```
+
+### Vector Search Algorithm
+
+```json
+{
+  "vectorSearch": {
+    "algorithms": [
+      {
+        "name": "my-hnsw",
+        "kind": "hnsw",
+        "hnswParameters": {
+          "m": 4,
+          "efConstruction": 400,
+          "efSearch": 500,
+          "metric": "cosine"
+        }
+      }
+    ],
+    "profiles": [
+      {
+        "name": "my-vector-profile",
+        "algorithm": "my-hnsw"
+      }
+    ]
+  }
+}
+```
+
+### Hybrid Search (Text + Vector)
+
+Combines keyword matching with semantic similarity:
+
+```json
+{
+  "search": "comfortable beds",
+  "vectorQueries": [
+    {
+      "kind": "vector",
+      "vector": [0.1, 0.2, ...],
+      "fields": "descriptionVector",
+      "k": 10
+    }
+  ]
+}
+```
+
+## Additional Learning Resources
+
+### Microsoft Learn Modules (Free)
+- [Create an Azure AI Search solution](https://learn.microsoft.com/en-us/training/modules/create-azure-cognitive-search-solution/)
+- [Create a custom skill for Azure AI Search](https://learn.microsoft.com/en-us/training/modules/create-enrichment-pipeline-azure-cognitive-search/)
+- [Create a knowledge store](https://learn.microsoft.com/en-us/training/modules/create-knowledge-store-azure-cognitive-search/)
+- [Implement advanced search features](https://learn.microsoft.com/en-us/training/modules/implement-advanced-search-features-azure-cognitive-search/)
+- [Build an Azure AI Search solution with vector search](https://learn.microsoft.com/en-us/training/modules/improve-search-results-vector-search/)
+
+### Official Documentation
+- [Azure AI Search overview](https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search)
+- [Indexer overview](https://learn.microsoft.com/en-us/azure/search/search-indexer-overview)
+- [Skillset concepts](https://learn.microsoft.com/en-us/azure/search/cognitive-search-working-with-skillsets)
+- [Knowledge store](https://learn.microsoft.com/en-us/azure/search/knowledge-store-concept-intro)
+- [Semantic search](https://learn.microsoft.com/en-us/azure/search/semantic-search-overview)
+- [Vector search](https://learn.microsoft.com/en-us/azure/search/vector-search-overview)
+- [Full Lucene query syntax](https://learn.microsoft.com/en-us/azure/search/query-lucene-syntax)
 - [AI Enrichment Overview](https://learn.microsoft.com/en-us/azure/search/cognitive-search-concept-intro)
 - [Built-in Skills Reference](https://learn.microsoft.com/en-us/azure/search/cognitive-search-predefined-skills)
 - [Custom Skills](https://learn.microsoft.com/en-us/azure/search/cognitive-search-custom-skill-web-api)
